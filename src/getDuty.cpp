@@ -1,7 +1,7 @@
+#include "getDuty.h"
 #include <Arduino.h>
-#include "processCommnad.h"
 
-MotorDuty processCommand(String cmd) {
+MotorDuty getDuty(String cmd, int motorMax) {
   MotorDuty res = {0, 0};
 
   if (cmd.length() != 6) {
@@ -16,8 +16,12 @@ MotorDuty processCommand(String cmd) {
   moveSpeed = constrain(moveSpeed, 0, JOY_MAX);
   turnValue = constrain(turnValue, 0, JOY_MAX);
 
-  int move = map(moveSpeed, 0, JOY_MAX, 0, MOTOR_MAX);
-  int turn = map(turnValue, 0, JOY_MAX, 0, MOTOR_MAX / 2);
+  int move = map(moveSpeed, 0, JOY_MAX, 0, motorMax);
+  int turn = map(turnValue, 0, JOY_MAX, 0, motorMax / 2);
+
+  if (move == 0) {
+    turn = map(turnValue, 0, JOY_MAX, 0, motorMax / 6);
+  }
 
   if (moveDir == 'B') {
     move = -move;
@@ -27,8 +31,8 @@ MotorDuty processCommand(String cmd) {
     turn = -turn;
   }
 
-  int dutyR = constrain(move + turn, -MOTOR_MAX, MOTOR_MAX);
-  int dutyL = constrain(move - turn, -MOTOR_MAX, MOTOR_MAX);
+  int dutyR = constrain(move + turn, -motorMax, motorMax);
+  int dutyL = constrain(move - turn, -motorMax, motorMax);
 
   if (moveSpeed == 0 && turnValue == 0) {
     dutyR = 0;
