@@ -7,6 +7,7 @@
 #define TX 12
 #define HEADLIGHT 7
 #define BACKLIGHT 2
+#define BUZZER 4
 
 // config
 #define SERIAL_BAUD 38400       // bluetooth module is configured at BAUD6 which represents 38400 bps
@@ -32,6 +33,10 @@ unsigned long previousMillis = 0;            // variable for keep track of time
 unsigned long lastCommandTime = 0;           // remember when last command was sent to the client
 const unsigned long SEND_INTERVAL = 200;     // interval of sending data about battery level and speed to client
 const unsigned long AUTO_STOP_TIMEOUT = 700; // timeout after we stop motors if no data was received from client
+bool isHeadlightOn = false;
+bool isBuzzerOn = false;
+unsigned long lastBuzzerTime = 0;
+const unsigned long BUZZER_INTERVAL = 200;
 
 void processCommand(char command);
 
@@ -54,7 +59,6 @@ void setup() {
   */
 
   BTSerial.begin(SERIAL_BAUD);
-  Serial.begin(SERIAL_BAUD);
 
   motorR.setDeadtime(MOTORS_DEADTIME);
   motorL.setDeadtime(MOTORS_DEADTIME);
@@ -112,12 +116,22 @@ void loop() {
     lastDutyR = 0;
     lastDutyL = 0;
   }
+
+  if (isBuzzerOn && millis() - lastBuzzerTime > BUZZER_INTERVAL) {
+    isBuzzerOn = false;
+    noTone(BUZZER);
+
+    if (isHeadlightOn) {
+      digitalWrite(HEADLIGHT, HIGH);
+    } else {
+      digitalWrite(HEADLIGHT, LOW);
+    }
+  }
 }
 
 void processCommand(char command) {
   switch (command) {
   case 'F': // Move forward
-    Serial.println("SERIAL_BAUD");
     motorL.setSpeedPerc(motorMax);
     motorR.setSpeedPerc(motorMax);
     break;
@@ -155,9 +169,11 @@ void processCommand(char command) {
     break;
 
   case 'U': // Turn headlight ON
+    isHeadlightOn = true;
     digitalWrite(HEADLIGHT, HIGH);
     break;
   case 'u': // Turn headlight OFF
+    isHeadlightOn = false;
     digitalWrite(HEADLIGHT, LOW);
     break;
   case 'V': // Turn backlight ON
@@ -166,7 +182,18 @@ void processCommand(char command) {
   case 'v': // Turn backlight OFF
     digitalWrite(BACKLIGHT, LOW);
     break;
+  case 'Y':
+    isBuzzerOn = true;
+    lastBuzzerTime = millis();
+    tone(BUZZER, 700);
 
+    if (isHeadlightOn) {
+      digitalWrite(HEADLIGHT, LOW);
+    } else {
+      digitalWrite(HEADLIGHT, HIGH);
+    }
+
+    break;
   case '1':
     motorMax = 50;
     break;
