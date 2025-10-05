@@ -3,19 +3,24 @@
 #define RIGHT_MOTOR_PWM 11
 #define LEFT_MOTOR_PWM_D 9
 #define LEFT_MOTOR_PWM 10
+
 #define RX 8
 #define TX 12
+
 #define HEADLIGHT 7
 #define BACKLIGHT 2
+
 #define BUZZER 4
 
 // config
 #define SERIAL_BAUD 38400       // bluetooth module is configured at BAUD6 which represents 38400 bps
 #define MOTORS_DEADTIME 20      // time in miliseconds. Delay of the motors before switching directions (backward and forward)
 #define MOTORS_MIN_DUTY_PERC 25 // minimum PWM in percent for motor to start
-#define MAX_SPEED_KMH 6         // maximum car speed in km/h
+#define MAX_SPEED_KMH 10         // maximum car speed in km/h not real. Just to a joke speed
 
 #include <Arduino.h>
+#include <Wire.h>
+
 #include <GyverMotor2.h>
 // DRIVER2WIRE_PWM_POWER - two wire driver with two PWM pins - torque mode
 GMotor2<DRIVER2WIRE_PWM_POWER> motorR(RIGHT_MOTOR_PWM_D, RIGHT_MOTOR_PWM); // right motor
@@ -24,19 +29,30 @@ GMotor2<DRIVER2WIRE_PWM_POWER> motorL(LEFT_MOTOR_PWM_D, LEFT_MOTOR_PWM);   // le
 #include <SoftwareSerial.h>
 SoftwareSerial BTSerial(RX, TX); // RX, TX Bluetooth
 
+#include <Adafruit_INA219.h>
+Adafruit_INA219 ina219; // voltage sensor to get the battery level MUST be connected to I2C pins A4(SDA), A5(SCL)
+
 #include "getDuty.h" // util function to calculate motors duty
+#include "getBatteryPercent.h" // util function to calculate battery percent
 
 int lastDutyR = 0; // variables to calculate car speed before sending it to client
 int lastDutyL = 0;
-int motorMax = 50;                           // max speed of the motors in percent
-unsigned long previousMillis = 0;            // variable for keep track of time
-unsigned long lastCommandTime = 0;           // remember when last command was sent to the client
+int motorMax = 50; // max speed of the motors in percent
+
 const unsigned long SEND_INTERVAL = 200;     // interval of sending data about battery level and speed to client
+unsigned long previousSendTime = 0;            // variable for keep track of time
+
+unsigned long lastCommandTime = 0;           // remember when last command was sent to the client
 const unsigned long AUTO_STOP_TIMEOUT = 700; // timeout after we stop motors if no data was received from client
 bool isHeadlightOn = false;
+
 bool isBuzzerOn = false;
 unsigned long lastBuzzerTime = 0;
 const unsigned long BUZZER_INTERVAL = 200;
+
+float busVoltage = 0;
+const unsigned long VOLTAGE_READ_TIMEOUT = 60000; // 1 minute
+unsigned long lastVoltageTime = 0;
 
 void processCommand(char command);
 
@@ -69,19 +85,27 @@ void setup() {
   pinMode(HEADLIGHT, OUTPUT);
   pinMode(BACKLIGHT, OUTPUT);
 
+  if (!ina219.begin()) {
+    BTSerial.println("Failed to find INA219 chip");
+    while (1) {
+      delay(10);
+    }
+  }
+
+  ina219.setCalibration_16V_400mA();
+  busVoltage = ina219.getBusVoltage_V();
+
   delay(1000); // in case for all modules to turn on before go to loop
 }
 
 void loop() {
-  unsigned long now = millis();
-
   if (BTSerial.available()) {                      // if there is data available from Bluetooth
     String input = BTSerial.readStringUntil('\n'); // Read complete command. Command format [F|B]nn[R|L]nn n=0..9 Example F67L30, B12R99
     input.trim();                                  // Remove unwanted spaces or newlines
 
     // ignore if the incoming command is not our format
     if (input.length() == 6) {
-      lastCommandTime = now;
+      lastCommandTime = millis();
 
       MotorDuty motorDuty = getDuty(input, motorMax);
 
@@ -92,21 +116,21 @@ void loop() {
       motorR.setSpeedPerc(motorDuty.dutyR);
     } else if (input.length() == 1) {
       const char functionCommand = input[0];
-      lastCommandTime = now;
+      lastCommandTime = millis();
 
       processCommand(functionCommand);
     }
   }
 
   // send data about battery level and speed to client every SEND_INTERVAL milliseconds
-  if (now - previousMillis >= SEND_INTERVAL) {
-    previousMillis = now;
+  if (millis() - previousSendTime >= SEND_INTERVAL) {
+    previousSendTime = millis();
 
-    // motorL.getSpeed() + motorR.getSpeed();
-    int avgDuty = (lastDutyR + lastDutyL) / 2;
-    int speedKmh = abs(avgDuty) * MAX_SPEED_KMH / motorMax;
+    const float avgDuty = (lastDutyR + lastDutyL) / 2.0; // 0..100
+    const int speedKmh = abs(avgDuty) / 100.0 * MAX_SPEED_KMH;
+    const int percent = getBatteryPercent(busVoltage);
 
-    // BTSerial.println("BAT:75,SPEED:" + String(speedKmh));
+    BTSerial.println("BAT:" + String(percent) + ",SPEED:" + String(speedKmh));
   }
 
   // autostop if no command is received for a AUTO_STOP_TIMEOUT period
@@ -117,6 +141,7 @@ void loop() {
     lastDutyL = 0;
   }
 
+  // turn off buzzer after BUZZER_INTERVAL period and restore headlight state
   if (isBuzzerOn && millis() - lastBuzzerTime > BUZZER_INTERVAL) {
     isBuzzerOn = false;
     noTone(BUZZER);
@@ -126,6 +151,13 @@ void loop() {
     } else {
       digitalWrite(HEADLIGHT, LOW);
     }
+  }
+
+  // read bus voltage every VOLTAGE_READ_TIMEOUT period but only if car is not moving
+  // when the car is moving the voltage reading is not stable
+  if (motorL.getState() == 0 && motorR.getState() == 0 && millis() - lastVoltageTime > VOLTAGE_READ_TIMEOUT) {
+    lastVoltageTime = millis();
+    busVoltage = ina219.getBusVoltage_V();
   }
 }
 
